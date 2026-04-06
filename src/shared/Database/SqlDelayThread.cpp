@@ -20,12 +20,15 @@
 #include "Database/SqlOperations.h"
 #include "DatabaseEnv.h"
 
-SqlDelayThread::SqlDelayThread(Database* db, SqlConnection* conn) : m_dbEngine(db), m_dbConnection(conn), m_running(true)
+SqlDelayThread::SqlDelayThread(Database* db, SqlConnection* conn) : m_dbEngine(db), m_dbConnection(conn), m_running(true), m_stopped(false)
 {
 }
 
 SqlDelayThread::~SqlDelayThread()
 {
+    if (!m_stopped)
+        Stop();
+
     // process all requests which might have been queued while thread was stopping
     ProcessRequests();
 }
@@ -67,6 +70,10 @@ void SqlDelayThread::run()
 
 void SqlDelayThread::Stop()
 {
+    if(m_stopped.exchange(true)) {
+        return;
+    }
+
     m_running = false;
 }
 
@@ -78,6 +85,10 @@ void SqlDelayThread::ProcessRequests()
     // lock in place can result in a deadlock with the world thread which calls Database::ProcessResultQueue()
     {
         std::lock_guard<std::mutex> guard(m_queueMutex);
+        if (m_sqlQueue.empty()) {
+            return;
+        }
+
         sqlQueue = std::move(m_sqlQueue);
     }
 
@@ -85,6 +96,11 @@ void SqlDelayThread::ProcessRequests()
     {
         auto const s = std::move(sqlQueue.front());
         sqlQueue.pop();
+
+        if (!s) {
+            continue;
+        }
+
         s->Execute(m_dbConnection);
     }
 }

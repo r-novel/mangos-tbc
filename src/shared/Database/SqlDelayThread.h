@@ -39,6 +39,7 @@ class SqlDelayThread : public MaNGOS::Runnable
         Database* m_dbEngine;                                   ///< Pointer to used Database engine
         SqlConnection* m_dbConnection;                          ///< Pointer to DB connection
         std::atomic<bool> m_running;
+        std::atomic<bool> m_stopped;
 
         // process all enqueued requests
         void ProcessRequests();
@@ -50,9 +51,23 @@ class SqlDelayThread : public MaNGOS::Runnable
         ///< Put sql statement to delay queue
         bool Delay(SqlOperation* sql)
         {
+            if (sql == nullptr) {
+                return false;
+            }
+
             std::lock_guard<std::mutex> guard(m_queueMutex);
-            m_sqlQueue.push(std::unique_ptr<SqlOperation>(sql));
-            return true;
+
+            if (!m_running) {
+                return false;
+            }
+
+            try {
+                m_sqlQueue.push(std::move(std::unique_ptr<SqlOperation>(sql)));
+                return true;
+
+            } catch (const std::bad_alloc&) {
+                return false;
+            }
         }
 
         virtual void Stop();                                ///< Stop event

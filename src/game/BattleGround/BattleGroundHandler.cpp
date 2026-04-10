@@ -484,13 +484,32 @@ void WorldSession::HandleBattlefieldPortOpcode(WorldPacket& recv_data)
         {
             case 1:                                         // port to battleground
             {
-                BattleGroundInQueueInfo* bgInQueue = queue->GetFreeSlotInstance(bgTypeId, queueInfo.isInvitedToBgInstanceGuid);
-                MANGOS_ASSERT(bgInQueue); // at this point must always exist
+                BattleGroundInQueueInfo* bgInQueue = queue->ResolveFreeSlotInstance(bgTypeId, queueInfo.isInvitedToBgInstanceGuid, queueInfo.arenaType != ARENA_TYPE_NONE);
+                if (!bgInQueue) {
+                    sLog.outError("BattlegroundHandler: invited instance %u for player %s was not found in free slot queue (bgTypeId %u, bgQueueTypeId %u).",
+                        queueInfo.isInvitedToBgInstanceGuid, playerGuid.GetString().c_str(), bgTypeId, bgQueueTypeId);
+
+                    // Stale invite state can happen due to async queue updates; clean it up without crashing.
+                    queueItem.RemovePlayer(*queue, playerGuid, false);
+                    sWorld.GetMessager().AddMessage([playerGuid, bgQueueTypeId, queueSlot, bgTypeId, bgClientInstanceId = queueInfo.clientInstanceId, isRated = queueInfo.isRated, mapId = queueInfo.mapId](World* /*world*/)
+                    {
+                        if (Player* player = sObjectMgr.GetPlayer(playerGuid)) {
+                            player->RemoveBattleGroundQueueId(bgQueueTypeId);
+                            WorldPacket data;
+                            sBattleGroundMgr.BuildBattleGroundStatusPacket(data, true, bgTypeId, bgClientInstanceId, isRated, mapId, queueSlot, STATUS_NONE, 0, 0, ARENA_TYPE_NONE, TEAM_NONE);
+                            player->GetSession()->SendPacket(data);
+                        }
+                    });
+                    return;
+                } else if (queueInfo.arenaType != ARENA_TYPE_NONE && bgInQueue->GetTypeId() != bgTypeId) {
+                    sLog.outError("BattlegroundHandler: resolved arena invite instance %u using bgTypeId %u instead of requested %u for player %s.",
+                        queueInfo.isInvitedToBgInstanceGuid, bgInQueue->GetTypeId(), bgTypeId, playerGuid.GetString().c_str());
+                }
 
                 // remove battleground queue status from BGmgr
                 queueItem.RemovePlayer(*queue, playerGuid, false);
 
-                sWorld.GetMessager().AddMessage([playerGuid, invitedTo = queueInfo.isInvitedToBgInstanceGuid, bgTypeId, bgQueueTypeId, groupTeam = queueInfo.groupTeam, queueSlot, bgClientInstanceId = bgInQueue->GetClientInstanceId(), isRated = bgInQueue->IsRated(), mapId = bgInQueue->GetMapId(), arenaType = bgInQueue->GetArenaType()](World* /*world*/)
+                sWorld.GetMessager().AddMessage([playerGuid, invitedTo = queueInfo.isInvitedToBgInstanceGuid, requestedBgTypeId = bgTypeId, resolvedBgTypeId = bgInQueue->GetTypeId(), bgQueueTypeId, groupTeam = queueInfo.groupTeam, queueSlot, bgClientInstanceId = bgInQueue->GetClientInstanceId(), isRated = bgInQueue->IsRated(), mapId = bgInQueue->GetMapId(), arenaType = bgInQueue->GetArenaType()](World* /*world*/)
                 {
                     Player* player = sObjectMgr.GetPlayer(playerGuid);
                     if (!player)
@@ -506,11 +525,11 @@ void WorldSession::HandleBattlefieldPortOpcode(WorldPacket& recv_data)
                     player->TaxiFlightInterrupt();
 
                     uint32 startTime = 0;
-                    if (BattleGround* bg = sBattleGroundMgr.GetBattleGround(invitedTo, bgTypeId))
+                    if (BattleGround* bg = sBattleGroundMgr.GetBattleGround(invitedTo, resolvedBgTypeId))
                         startTime = bg->GetStartTime();
 
                     WorldPacket data;
-                    sBattleGroundMgr.BuildBattleGroundStatusPacket(data, true, bgTypeId, bgClientInstanceId, isRated, mapId, queueSlot, STATUS_IN_PROGRESS, 0, startTime, arenaType, player->GetBGTeam());
+                    sBattleGroundMgr.BuildBattleGroundStatusPacket(data, true, resolvedBgTypeId, bgClientInstanceId, isRated, mapId, queueSlot, STATUS_IN_PROGRESS, 0, startTime, arenaType, player->GetBGTeam());
                     player->GetSession()->SendPacket(data);
 
                     // this is still needed here if battleground "jumping" shouldn't add deserter debuff
@@ -519,13 +538,13 @@ void WorldSession::HandleBattlefieldPortOpcode(WorldPacket& recv_data)
                         currentBg->RemovePlayerAtLeave(player->GetObjectGuid(), false, true);
 
                     // set the destination instance id
-                    player->SetBattleGroundId(invitedTo, bgTypeId);
+                    player->SetBattleGroundId(invitedTo, resolvedBgTypeId);
                     // set the destination team
                     player->SetBGTeam(groupTeam);
 
-                    sBattleGroundMgr.SendToBattleGround(player, invitedTo, bgTypeId);
+                    sBattleGroundMgr.SendToBattleGround(player, invitedTo, resolvedBgTypeId);
 
-                    DEBUG_LOG("Battleground: player %s (%u) joined battle for bg %u, bgtype %u, queue type %u.", player->GetName(), player->GetGUIDLow(), invitedTo, bgTypeId, bgQueueTypeId);
+                    DEBUG_LOG("Battleground: player %s (%u) joined battle for bg %u, requested bgtype %u, resolved bgtype %u, queue type %u.", player->GetName(), player->GetGUIDLow(), invitedTo, requestedBgTypeId, resolvedBgTypeId, bgQueueTypeId);
                 });
 
                 break;

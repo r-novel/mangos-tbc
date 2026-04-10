@@ -573,7 +573,9 @@ class Spell
 
         void StopCast(SpellCastResult castResult);
 
-        void ExecuteEffects(Unit* unitTarget, Item* itemTarget, GameObject* GOTarget, uint32 effectMask);
+        struct ItemTargetInfo;
+    
+        void ExecuteEffects(Unit* unitTarget, Item* itemTarget, GameObject* GOTarget, uint32 effectMask, ItemTargetInfo* itemTargetRefresh = nullptr);
         void HandleEffect(Unit* unitTarget, Item* itemTarget, GameObject* GOTarget, SpellEffectIndex effIdx, float damageMultiplier = 1.0);
         void HandleThreatSpells();
         void ProcessAOECaps();
@@ -738,6 +740,7 @@ class Spell
         struct ItemTargetInfo
         {
             Item* item;
+            ObjectGuid itemGuid; // real world item id;
             uint8 effectMask;
         };
 

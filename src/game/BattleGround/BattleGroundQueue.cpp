@@ -1540,6 +1540,27 @@ BattleGroundInQueueInfo* BattleGroundQueue::GetFreeSlotInstance(BattleGroundType
     return &(*itr);
 }
 
+BattleGroundInQueueInfo* BattleGroundQueue::ResolveFreeSlotInstance(BattleGroundTypeId requestedBgTypeId, uint32 instanceId, bool isArena)
+{
+    if (BattleGroundInQueueInfo* bgInQueue = GetFreeSlotInstance(requestedBgTypeId, instanceId))
+        return bgInQueue;
+
+    if (!isArena)
+        return nullptr;
+    
+    // fallback lookup concrete arena type by instance id
+    BattleGroundTypeId arenaLookupTypes[] = { BATTLEGROUND_AA, BATTLEGROUND_NA, BATTLEGROUND_BE, BATTLEGROUND_RL };
+    for (BattleGroundTypeId arenaTypeId : arenaLookupTypes) {
+        if (arenaTypeId == requestedBgTypeId)
+            continue;
+
+        if (BattleGroundInQueueInfo* bgInQueue = GetFreeSlotInstance(arenaTypeId, instanceId))
+            return bgInQueue;
+    }
+
+    return nullptr;
+}
+
 BattleGroundQueueItem& BattleGroundQueue::GetBattleGroundQueue(BattleGroundQueueTypeId bgQueueTypeId)
 {
     return m_battleGroundQueues[bgQueueTypeId];

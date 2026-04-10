@@ -1144,6 +1144,7 @@ void Spell::AddItemTarget(Item* item, uint8 effectMask)
 
     ItemTargetInfo target;
     target.item       = item;
+    target.itemGuid   = item->GetObjectGuid();
     target.effectMask = effectMask;
     m_UniqueItemInfo.push_back(target);
 }
@@ -1607,9 +1608,9 @@ void Spell::DoAllEffectOnTarget(ItemTargetInfo* target)
     if (!target->item || !effectMask)
         return;
 
-    itemTarget = target->item; // redundant but for safety against future change for hook functionality
+  // itemTarget = target->item; // redundant but for safety against future change for hook functionality
 
-    ExecuteEffects(nullptr, target->item, nullptr, effectMask);
+    ExecuteEffects(nullptr, nullptr, nullptr, effectMask, target);
 
     OnHit(SPELL_MISS_NONE);
 }
@@ -4735,14 +4736,35 @@ void Spell::HandleThreatSpells()
     DEBUG_FILTER_LOG(LOG_FILTER_SPELL_CAST, "Spell %u added an additional %f threat for %s " SIZEFMTD " target(s)", m_spellInfo->Id, threat, positive ? "assisting" : "harming", m_UniqueTargetInfo.size());
 }
 
-void Spell::ExecuteEffects(Unit* unitTarget, Item* itemTarget, GameObject* GOTarget, uint32 effectMask)
+
+Item* FindExistingPlayerItemByGuid(Player* player, ObjectGuid itemGuid)
+{
+    if (!player || !itemGuid)
+        return nullptr;
+    if (Item* inv = player->GetItemByGuid(itemGuid))
+        return inv;
+    if (TradeData* pTrade = player->GetTradeData())
+        for (uint32 i = 0; i < TRADE_SLOT_COUNT; ++i) {
+            Item* it = pTrade->GetTraderData()->GetItem(TradeSlots(i));
+            if (it && it->GetObjectGuid() == itemGuid) {
+                return it;
+            }
+        }
+
+    return nullptr;
+}
+
+void Spell::ExecuteEffects(Unit* unitTarget, Item* itemTarget, GameObject* GOTarget, uint32 effectMask, ItemTargetInfo* itemTargetRefresh)
 {
     Unit* affectiveCaster = GetAffectiveCaster();
+    Player* pl = (itemTargetRefresh && m_caster && m_caster->GetTypeId() == TYPEID_PLAYER) ? static_cast<Player*>(m_caster) : nullptr;
+
     for (uint32 i = 0; i < MAX_EFFECT_INDEX; ++i)
     {
         if (effectMask & (1 << i))
         {
-            HandleEffect(unitTarget, itemTarget, GOTarget, SpellEffectIndex(i), m_damageMultipliers[i]);
+            Item* curItem = itemTargetRefresh ? itemTargetRefresh->item : itemTarget;
+            HandleEffect(unitTarget, curItem, GOTarget, SpellEffectIndex(i), m_damageMultipliers[i]);
             if (m_applyMultiplierMask & (1 << i))
             {
                 // Get multiplier
@@ -4752,6 +4774,18 @@ void Spell::ExecuteEffects(Unit* unitTarget, Item* itemTarget, GameObject* GOTar
                     if (Player* modOwner = affectiveCaster->GetSpellModOwner())
                         modOwner->ApplySpellMod(m_spellInfo->Id, SPELLMOD_EFFECT_PAST_FIRST, multiplier);
                 m_damageMultipliers[i] *= multiplier;
+            }
+            // Effects may destroy or consume the item; Must update the item pointer after each effect;
+            if (pl)
+            {
+                itemTargetRefresh->item = FindExistingPlayerItemByGuid(pl, itemTargetRefresh->itemGuid);
+                if (m_targets.getItemTargetGuid() == itemTargetRefresh->itemGuid)
+                {
+                    if (itemTargetRefresh->item)
+                        m_targets.setItemTarget(itemTargetRefresh->item);
+                    else
+                        m_targets.clearItemPointer();
+                }
             }
         }
     }
